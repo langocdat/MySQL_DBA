@@ -1,0 +1,110 @@
+================INSTALL AND CONFIGURE INNODB MYSQL==================
+
+-----------------------------------------------
+ MINIMUM REQUIREMENT ARCHITECTURE
+ - RAM: 2Gb
+ - Disk: 30Gb 
+ - NetWork: Bridged Adapter NetWork + Host only
+ - OS: Window 10
+ 
+ -----> 3 Hosts:
+ 
+ -----InnoDB DC-------------
+ - Host 1: Read/Write db1 node (Primary)
+ - Host 2: Read Only db2 node (Standby)
+ -----InnoDB DR-------------
+ - Host 3: Read Only db2 node (Primary)
+ 
+---INSTALL InnoDB DC---------------------------------------- 
+Primary - Node 1
+	Step 1: download installer follow the https://downloads.mysql.com/archives/installer/
+	 attention: Open installer -> Select "Custom" -> Select "MySQLServer" and "MySQL shell"
+	 
+	Step 2: configure file hosts
+	 - path: C:\Windows\System32\drivers\etc\hosts
+	 -->> Open Notepad with role "Run as administrator" -->> Select path "C:\Windows\System32\drivers\etc\hosts" -->> Add IP -->> Save
+		192.168.56.108  db1
+		192.168.56.106  db2
+		
+	Step 3: configure my.ini 
+	 - path: C:\ProgramData\MySQL\MySQL Server 8.0
+	 -->> Open Notepad with role "Run as administrator" -->> Select path "C:\ProgramData\MySQL\MySQL Server 8.0" -->> Edit "server-id=1" -->> Save
+	 attention: Each node has its own server-id, which cannot be duplicated, including server-id between nodes belonging to DC and DR.
+	 
+	Step 4: Open port 3306 or off firewall 
+	 - Open "Windows Deffender Firewall" -->> Click "Turn Windows Defender Firewall on or off" -->> Click " Turn off .." -->> OK
+
+	Step 5: Configure localInstance
+	 - 5.1. Open cmd 
+		(bash) cd C:\Program Files\MySQL\MySQL Shell 8.0\bin -->> mysqlsh.exe
+	 - 5.2. Connect: 
+		(js):shell.connect('root@localhost:3306')
+	 - 5.3. Create local instance: 
+		(js): dba.configureLocalInstance()
+		 -->> Create user "ic" and fill password -->> double fill "Y" 
+
+	Step 6: Create cluster in Db1
+	 - 6.1. Use user "ic" 
+		(js): shell.connect('ic@localhost:3306')
+	 - 6.2. Create cluster
+		(js): cluster = dba.createCluster("mycluster")
+	-->> Check: cluster.status() or dba.getCluster().status()
+
+Secondary - Node 2
+	Do steps 1, 2, 3, 4, 5
+	
+Continue on Primary - Node 1
+	Step 7: Add node
+	(js): cluster.addInstance('ic@db2:3306') or replace db2 = <IP address>
+	-->> Check: dba.getCluster()
+	-->> Check: dba.getCluster().status()
+
+
+---INSTALL InnoDB DR---------------------------------------- 
+attention: add node in InnoDB DR after create ClusterSet on DC
+	Step 8:
+		Do steps 1, 2, 3, 4, 5
+	
+======================================================================
+Create ClusterSet on Primary belongs to DC
+	Step 9: Create ClusterSet
+	(js): dba.getCluster().createClusterSet('<clusterset_name>')
+	Ex: dba.getCluster().createClusterSet('myclusterset')
+	-->> Check: dba.getClusterSet().status()
+	attention: dba.getCluster().help() can be used to prompt
+
+======================================================================	
+Replicate Cluster for DR
+	Step 10: 
+	(js): dba.getClusterSet().creaReplicaCluster('ic@<IP_address_primary_DR>:3306', '<cluster_dr_name>');
+	Ex: dba.getClusterSet().creaReplicaCluster('ic@192.168.56.109:3306', 'drcluster');
+	-->> Check: dba.getClusterSet().status();
+	Step 11: On Primary in DR, option add node in InnoDB DR (same step 7)
+	(js): cluster.addInstance('ic@db2:3306') or replace db2 = <IP address>
+	-->> Check: dba.getCluster()
+	-->> Check: dba.getCluster().status()
+	
+======================================================================
+Switch role DC -->> DR
+	(js): clusterset.setPrimaryCluster('drclsuter');
+
+
+======================================================================
+Bật lại cluster sau khi off server
+Step 1: khởi động lại các máy ảo
+Step 2: Khởi động Group replication trên từng nớ
+	- (js): shell.connect('root@localhost:3306')
+	- (js): \sql
+Step 3: Kiểm tra tràn thái GR:
+	- (sql): show status like 'group_replication_status';
+	- Thực hiện bootstrap trên node đầu tiên
+		(sql): set global group_replication_bootstrap_group=ON;
+		(sql): start group_replication;
+		(sql): set global group_replication_bootstrap_group=OFF;
+	- Các node còn lại: start group_replication;
+Step 4: Check cluster hoạt động lại
+	- (sql): \js
+	- (js): shell.connect('ic@localhost:3306');
+	- (js): dba.getCluster().status();
+Step 5: Check clusterSet()
+	- (js): dba.getClusterSet().status();
