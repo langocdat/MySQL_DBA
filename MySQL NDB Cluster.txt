@@ -1,0 +1,361 @@
+<->Install & Configuration MySQL NDB Cluster HA (HighAvailable)<->
+(Binary Installation)
+======================================================================================
+
+***MINIMUM REQUIREMENT ARCHITECTURE
+===>>Perform for all hosts
+
+- Requirement: 1 Gb RAM, 50 Gb Disk, Bridged Adapter Network & NAT Adapter for connect host
+
+- Prepare: Download installation file -> 
+
+mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar:
+wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-8.0/mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar
+
+OpenSSL_1_1_1l (ERROR libcrypto.so.1.1 & libssl.so.1.1):
+wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1l.tar.gz
+tar xvf OpenSSL_1_1_1l.tar.gz
+mv openssl-OpenSSL_1_1_1l openssl
+cd openssl
+./config
+make
+make test
+make install
+-> copy libcrypto.so.1.1 & libssl.so.1.1 from OpenSSL_1_1_1l/bin/ to /usr/lib64/:
+cp libcrypto.so.1.1 /usr/lib64/
+cp libssl.so.1.1 /usr/lib64/
+
+- 5 Host:
+
+~Host 1: NDB Management Server - mgmd: 192.168.202.100 (manage)
+-->>Port: 1186/tcp (connect nodes to manage)
+
+~Host 2: SQL node 1 - sql1: 192.168.202.101 (run mysqld to receive query)
+~Host 3: SQL node 2 - sql2: 192.168.202.102
+-->>Port: 3306/tcp (mysql)
+
+~Host 4: Data node 1 - data1: 192.168.202.103 (contain data)
+~Host 5: Data node 2 - data2: 192.168.202.104
+-->>Port: 32768-61000 (sync data)
+
+- Disable firewall service, set SELinux to disable mode: (...)
+
+======================================================================================
+
+***CONFIG NETWORK, FIREWALL; INSTALL SUPPORT PACKAGE
+===>>Perform on all hosts (root user)
+
+->UPDATE REPO LIST (yum update -y)
+
+->EDIT HOST
+
+vi /etc/hosts
+
+192.168.202.100	mgmd
+192.168.202.101	sql1
+192.168.202.102	sql2
+192.168.202.103	data1
+192.168.202.104	data2
+
+======================================================================================
+
+***STEP 1: CONFIG IN MANAGER NODE (root user)
+===>>Perform on mgmd host (192.168.202.100)
+
+- Save installation file in /usr/local
+
+- Add user mysql:
+
+groupadd mysql
+useradd -g mysql mysql
+
+- Decompress installation file:
+
+cd /usr/local
+tar xvf mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar
+tar xvf mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar.xz
+mv mysql-cluster-8.0.31-linux-glibc2.12-x86_64 mysql
+chown -R mysql:mysql /usr/local/mysql/
+
+- Create folder to save configuration & log file:
+
+mkdir /var/lib/mysql-cluster
+chown -R mysql:mysql /var/lib/mysql-cluster
+
+- Create file to declare information about Manager, SQL & Data Node:
+
+vi /var/lib/mysql-cluster/config.ini
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[ndbd default]
+# Options affecting ndbd processes on all data nodes:
+NoOfReplicas=2 # Number of replicas
+DataMemory=98M # How much memory to allocate for data storage
+
+[ndb_mgmd]
+# Management process options:
+HostName=mgmd # Hostname or IP address of MGM node
+DataDir=/var/lib/mysql-cluster # Directory for MGM node log files
+
+[ndbd]
+# Options for data node "data1":
+# (one [ndbd] section per data node)
+HostName=data1 # Hostname or IP address
+NodeId=2 # Node ID for this data node
+DataDir=/usr/local/mysql/data # Directory for this data node's data files Initial Startup of NDB Cluster
+
+[ndbd]
+# Options for data node "data2":
+HostName=data2 # Hostname or IP address
+NodeId=3 # Node ID for this data node
+DataDir=/usr/local/mysql/data # Directory for this data node's data files Initial Startup of NDB Cluster
+
+[mysqld]
+# Options for sql node "sql1":
+HostName=sql1 # Hostname or IP address
+NodeId=4
+# (additional mysqld connections can be
+# specified for this node for various
+# purposes such as running ndb_restore)
+
+[mysqld]
+# Options for sql node "sql2":
+HostName=sql2 # Hostname or IP address
+NodeId=5
+# (additional mysqld connections can be
+# specified for this node for various
+# purposes such as running ndb_restore)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Focus on 2 files binary -> service: /usr/local/mysql/bin/ndb_mgmd & /usr/local/mysql/bin/ndb_mgm
+
+cp /usr/local/mysql/bin/ndb_mgm* /usr/local/bin
+chmod -R +x /usr/local/bin/ndb_mgm*
+
+- Start service with system by create file /etc/systemd/system/ndb_mgmd.service:
+
+vi /etc/systemd/system/ndb_mgmd.service
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[Unit]
+Description=MySQL NDB Cluster Management Server
+After=network.target auditd.service
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/ndb_mgmd -f /var/lib/mysql-cluster/config.ini
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Restart daemon to run ndb_mgmd.service
+
+systemctl daemon-reload
+systemctl enable ndb_mgmd
+systemctl start ndb_mgmd
+systemctl status ndb_mgmd
+->active (running)
+
+*****Change hostname or any param in ndb_mgm (if wrong):
+
+kill session: 
+netstat -tulpn|grep 1186
+kill -9 (...)
+change param in config file /var/lib/mysql-cluster/config.ini & run again:
+ndb_mgmd --initial --config-file=/var/lib/mysql-cluster/config.ini
+
+======================================================================================
+
+***STEP 2: CONFIG IN DATA NODE (root user)
+===>>Perform on each node in turn
+
+- Save installation file in /usr/local
+
+- Add user mysql:
+
+groupadd mysql
+useradd -g mysql mysql
+
+- Decompress installation file:
+
+cd /usr/local
+tar -zxvf mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar
+mv mysql-cluster-8.0.31-linux-glibc2.12-x86_64 mysql
+chown -R mysql:mysql /usr/local/mysql/
+
+- Create folder to save data & log file:
+
+mkdir /usr/local/mysql/data
+chown -R mysql:mysql /usr/local/mysql/data
+
+- Focus on 2 files binary -> service: /usr/local/mysql/bin/ndbd, single-threaded & /usr/local/mysql/bin/ndbmtd, multi-threaded
+
+cp /usr/local/mysql/bin/ndbd /usr/local/bin
+cp /usr/local/mysql/bin/ndbmtd /usr/local/bin
+chmod -R +x /usr/local/bin/ndb*
+
+(Just run only 1 service)
+
+- Create file to declare information about Management node for Data node connect:
+
+vi /etc/my.cnf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[mysqld]
+# Options for mysqld process:
+ndbcluster # run NDB storage engine
+
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring=mgmd # location of management server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Start service with system by create file /etc/systemd/system/ndbd.service:
+
+vi /etc/systemd/system/ndbd.service
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[Unit]
+Description=MySQL NDB Cluster Management Server
+After=network.target auditd.service
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/ndbd
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Restart daemon to run ndbd.service
+
+systemctl daemon-reload
+systemctl enable ndbd
+systemctl start ndbd
+systemctl status ndbd
+
+- Check in Management node: ndb_mgm -e 'show'
+
+======================================================================================
+
+***STEP 3: CONFIG IN SQL NODE (root user)
+===>>Perform on each node in turn
+
+- Save installation file in /usr/local
+
+- Add user mysql:
+
+groupadd mysql
+useradd -g mysql mysql
+
+- Decompress installation file:
+
+cd /usr/local
+tar -zxvf mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar
+mv mysql-cluster-8.0.31-linux-glibc2.12-x86_64 mysql
+chown -R mysql:mysql /usr/local/mysql/
+
+- Focus on files binary -> service:
+
+Mysql command-line client (file binary /usr/local/mysql/bin/mysql)
+Service mysql server (file binary /usr/local/mysql/bin/mysqld)
+Sercurity settings for MySQL (file binary /usr/local/mysql/bin/mysql_secure_installation)
+Safe start & debug mysql (file binary /usr/local/mysql/bin/mysqld_safe)
+Client with admin privilege to setup mysql (file binary /usr/local/mysql/bin/mysqladmin)
+Start mysql server (file binary /usr/local/mysql/support-files/mysql.server)
+
+- Create folder to save data & log:
+
+mkdir /usr/local/mysql/data
+chown -R mysql:mysql /usr/local/mysql/data
+
+-Create file to declare information about Management node for SQL node to connect:
+
+vi /etc/my.cnf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[mysqld]
+# Options for mysqld process:
+ndbcluster # run NDB storage engine
+ndb-connectstring=mgmd # IP address for server management node
+default_storage_engine=ndbcluster # Define default Storage Engine used by MySQL
+
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring=mgmd # location of management server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Create temporary password for root user:
+
+cd /usr/local/mysql/bin
+./mysqld --initialize
+--->> .w=Psqq+k0T/ (sql1)
+--->> =hwOgorLa1Qt (sql2)
+
+- Grant privilege for folder contain configuration& log:
+
+chown -R mysql:mysql /usr/local/mysql/data
+
+- Start mysql server service with system:
+
+cp /usr/local/mysql/support-files/mysql.server /etc/rc.d/init.d/
+chmod +x /etc/rc.d/init.d/mysql.server
+chkconfig --add mysql.server
+
+systemctl start mysql
+systemctl status mysql
+
+- Login with temporary password & change password for root user:
+
+cd /usr/local/mysql/bin
+./mysql -u root -p
+
+Mysql> ALTER USER 'root'@'localhost' IDENTIFIED BY '1', 'root'@'localhost' PASSWORD EXPIRE NEVER;
+Mysql> flush privileges;
+Mysql> exit
+
+- Check on Management node: ndb_mgm -e 'show'
+
+======================================================================================
+
+***STEP 4: CHECKING DATA SYNC (root user)
+===>>Perform on sql node 1 or 2
+
+cd /usr/local/mysql/bin
+./mysql -u root -p
+
+- Create database dbtest:
+
+create database dbtest;
+use dbtest;
+
+- Create table & insert data:
+
+create table students(student_Id BIGINT NOT NULL, student_name VARCHAR(40) NOT NULL) ENGINE=ndbcluster;
+
+*****NOTE: engine=ndbcluster is the key to sync data in data nodes. If you want to sync any data in table, you just need to ALTER TABLE table_name ENGINE=NDBCLUSTER;
+
+insert into students(student_Id, student_name) values('1', 'Nguyen Van A');
+insert into students(student_Id, student_name) values('2', 'Tran Thi B');
+insert into students(student_Id, student_name) values('3', 'Le Van C');
+insert into students(student_Id, student_name) values('5', 'Tran Van E');
+
+
+select * from students;
+
+- Go to node 2 to see the result:
+
+show databases;
+show full tables;
+use dbtest;
+select * from students;
+
+
+======================================================================================
+
+***STEP 5: CREATE CONNECTION TO MYSQL WORKBENCH (root user)
+===>>Perform on sql node 1 or 2
+
+CREATE USER 'conn'@'192.168.11.174' IDENTIFIED BY 'welcome1';
+GRANT ALL PRIVILEGES ON *.* TO 'conn'@'192.168.11.174';
+FLUSH PRIVILEGES;

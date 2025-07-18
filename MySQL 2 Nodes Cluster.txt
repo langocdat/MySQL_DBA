@@ -1,0 +1,372 @@
+MYSQL 2 NODES CLUSTER
+==============================================
+***MINIMUM REQUIREMENT ARCHITECTURE
+===>>Perform for both hosts
+
+- Requirement: 1 Gb RAM, 50 Gb Disk, Host Only Network & NAT Adapter for connect host
+
+- Disable firewall service, set SELinux to disable mode: (...)
+
+- Prepare: Download installation file -> 
+
+mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar:
+wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-8.0/mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar
+
+OpenSSL_1_1_1l (ERROR libcrypto.so.1.1 & libssl.so.1.1):
+wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1l.tar.gz
+tar xvf OpenSSL_1_1_1l.tar.gz
+mv openssl-OpenSSL_1_1_1l openssl
+cd openssl
+./config
+make
+make test
+make install
+-> copy libcrypto.so.1.1 & libssl.so.1.1 from OpenSSL_1_1_1l/bin/ to /usr/lib64/:
+cp libcrypto.so.1.1 /usr/lib64/
+cp libssl.so.1.1 /usr/lib64/
+
+==============================================
+
+***CONFIG NETWORK, INSTALL SUPPORT PACKAGE
+===>>Perform on all hosts (root user)
+
+->UPDATE REPO LIST (yum update -y)
+
+->EDIT HOST
+
+vi /etc/hosts
+
+#db1
+192.168.202.132	db1
+192.168.80.100	db1mgmd
+
+#db2
+192.168.202.134	db2
+192.168.80.101	db2mgmd
+
+#router_vip
+192.168.80.150	router
+
+==============================================
+
+***STEP 1: CONFIG FOR MANAGER NODE (root user)
+===>>Perform on both host
+
+- Save installation file in /usr/local
+
+- Add user mysql:
+
+groupadd mysql
+useradd -g mysql mysql
+
+- Decompress installation file:
+
+cd /usr/local
+tar xvf mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar
+tar xvf mysql-cluster-8.0.31-linux-glibc2.12-x86_64.tar.xz
+mv mysql-cluster-8.0.31-linux-glibc2.12-x86_64 mysql
+chown -R mysql:mysql /usr/local/mysql/
+
+- Create folder to save configuration, log file & data:
+
+mkdir /var/lib/mysql-cluster
+chown -R mysql:mysql /var/lib/mysql-cluster
+
+mkdir /usr/local/mysql/data
+chown -R mysql:mysql /usr/local/mysql/data
+
+- Create file to declare information about Manager, SQL & Data Node:
+
+vi /var/lib/mysql-cluster/config.ini
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Management process options:
+[ndb_mgmd]
+HostName=db1
+NodeId=1
+DataDir=/var/lib/mysql-cluster
+
+[ndb_mgmd]
+HostName=db2
+NodeId=2
+DataDir=/var/lib/mysql-cluster
+
+[ndbd]
+HostName=db1
+DataDir=/usr/local/mysql/data
+
+[ndbd]
+HostName=db2
+DataDir=/usr/local/mysql/data
+
+[mysqld]
+HostName=db1
+
+[mysqld]
+HostName=db2
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Focus on 2 files binary -> service: /usr/local/mysql/bin/ndb_mgmd & /usr/local/mysql/bin/ndb_mgm
+
+cp /usr/local/mysql/bin/ndb_mgm* /usr/local/bin
+chmod -R +x /usr/local/bin/ndb_mgm*
+
+- Start service with system by create file /etc/systemd/system/ndb_mgmd.service:
+
+vi /etc/systemd/system/ndb_mgmd.service
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[Unit]
+Description=MySQL NDB Cluster Management Server
+After=network.target auditd.service
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/ndb_mgmd -f /var/lib/mysql-cluster/config.ini
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Restart daemon to run ndb_mgmd.service
+
+systemctl daemon-reload
+systemctl enable ndb_mgmd
+systemctl start ndb_mgmd
+systemctl status ndb_mgmd
+->active (running)
+
+*****Change hostname or any param in ndb_mgm (if wrong):
+
+kill session: 
+netstat -tulpn|grep 1186
+kill -9 (...)
+change param in config file /var/lib/mysql-cluster/config.ini & run again:
+ndb_mgmd --initial --config-file=/var/lib/mysql-cluster/config.ini
+
+==============================================
+***STEP 2: CONFIG FOR DATA NODE (root user)
+===>>Perform on both nodes in turn
+
+- Focus on 2 files binary -> service: /usr/local/mysql/bin/ndbd, single-threaded & /usr/local/mysql/bin/ndbmtd, multi-threaded
+
+cp /usr/local/mysql/bin/ndbd /usr/local/bin
+cp /usr/local/mysql/bin/ndbmtd /usr/local/bin
+chmod -R +x /usr/local/bin/ndb*
+
+(Just run only 1 service)
+
+- Install Pacemaker for router HA for both nodes
+
+yum install -y pacemaker pcs resource-agents
+systemctl start pcsd.service 
+systemctl enable pcsd.service
+
+echo Lethang@1752 | passwd --stdin hacluster
+
+pcs cluster auth db1 db2 -u hacluster -p Lethang@1752 --force
+(--> Authorized)
+
+pcs cluster setup --force --name routercluster db1 db2
+
+pcs cluster start --all
+
+crm_mon -1 (check status)
+
+- Create file to declare information about Management node for Data node connect:
+
+vi /etc/my.cnf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[mysqld]
+# Options for mysqld process:
+ndbcluster # run NDB storage engine
+pid-file=/usr/local/mysql/data/db.pid
+
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring=db2 # location of management server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Start service with system by create file /etc/systemd/system/ndbd.service:
+
+vi /etc/systemd/system/ndbd.service
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[Unit]
+Description=MySQL NDB Cluster Management Server
+After=network.target auditd.service
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/ndbd
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+netstat -tulpn|grep 1186 -> check port for start ndbd
+
+- Restart daemon to run ndbd.service
+
+systemctl daemon-reload
+systemctl enable ndbd
+systemctl start ndbd
+systemctl status ndbd
+
+- Check in Management node: ndb_mgm -e 'show'
+
+==============================================
+***STEP 3: CONFIG IN SQL NODE (root user)
+===>>Perform on each node in turn
+
+yum install -y mysql-release-el7.x86_64
+yum install -y mysql-server mysql
+
+- Focus on files binary -> service:
+
+Mysql command-line client (file binary /usr/local/mysql/bin/mysql)
+Service mysql server (file binary /usr/local/mysql/bin/mysqld)
+Sercurity settings for MySQL (file binary /usr/local/mysql/bin/mysql_secure_installation)
+Safe start & debug mysql (file binary /usr/local/mysql/bin/mysqld_safe)
+Client with admin privilege to setup mysql (file binary /usr/local/mysql/bin/mysqladmin)
+Start mysql server (file binary /usr/local/mysql/support-files/mysql.server)
+
+-Add config to my.cnf
+
+vi /etc/my.cnf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[mysqld]
+# Options for mysqld process:
+ndbcluster # run NDB storage engine
+ndb-connectstring=db1 # IP address for server management node
+default_storage_engine=ndbcluster # Define default Storage Engine used by MySQL
+
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring=db1 # location of management server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Create temporary password for root user:
+
+cd /usr/local/mysql/bin
+./mysqld --initialize
+
+if /usr/local/mysql/data/ has file -> remove all
+
+--->> xK3!1sCIuoP) (sql1)
+--->> X_&uj&_cb0i9 (sql2)
+
+- Grant privilege for folder contain configuration& log:
+
+- Start mysql server service with system:
+
+cp /usr/local/mysql/support-files/mysql.server /etc/rc.d/init.d/
+chmod +x /etc/rc.d/init.d/mysql.server
+chkconfig --add mysql.server
+
+- Grant privilege for folder contain configuration& log:
+
+chown -R mysql:mysql /usr/local/mysql/data
+
+systemctl start mysql
+systemctl status mysql
+
+- Add config in /etc/my.cnf
+
+[mysqld]
+socket=/var/lib/mysql/mysql.sock 
+
+- Restart mysql: service mysql restart
+
+- Login with temporary password & change password for root user:
+
+cd /usr/local/mysql/bin
+./mysql -u root -p
+
+Mysql> ALTER USER 'root'@'localhost' IDENTIFIED BY '1', 'root'@'localhost' PASSWORD EXPIRE NEVER;
+Mysql> flush privileges;
+Mysql> exit
+
+- Check on Management node: ndb_mgm -e 'show'
+
+===================================================
+CONTINUE WITH PACEMAKER
+
+- Add properties
+
+pcs property set stonith-enabled=false
+pcs property set no-quorum-policy=ignore
+pcs resource defaults migration-threshold=1
+
+- Check Current DC on crm_mon -1 -> db2
+
+- Add resource (for network+os error):
+pcs resource create Router_VIP ocf:heartbeat:IPaddr2 \
+ip=192.168.80.150 cidr_netmask=24 op monitor interval=5s
+
+- Add resource (for db error):
+pcs resource create mysql ocf:heartbeat:mysql \
+binary="/usr/bin/mysqld_safe" config="/etc/my.cnf" datadir="/usr/local/mysql/data" \
+socket="/var/lib/mysql/mysql.sock" \
+pid="/usr/local/mysql/data/db.pid" \
+additional_parameters="--bind-address=0.0.0.0" \
+op start timeout=60s op stop timeout=60s op monitor interval=20s
+
+pcs constraint colocation add Router_VIP with mysql score=INFINITY
+
+- Deploy Router
+wget https://dev.mysql.com/get/mysql80-community-release-el7-7.noarch.rpm
+
+rpm -i mysql80-community-release-el7-7.noarch.rpm
+
+yum update -y
+
+yum install -y mysql-router.x86_64 mysql-community-client.x86_64 mysql-router-community.x86_64
+
+- Create User for Router and App connection
+mysql -u root -p
+CREATE USER 'dbadmin'@'%' IDENTIFIED BY 'Lethang@1752';
+GRANT ALL PRIVILEGES ON *.* TO 'dbadmin'@'%' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+
+- Check resources:
+pcs resource list | grep router
+
+- Add resources (node clone):
+pcs resource create mysqlrouter systemd:mysqlrouter clone
+
+- Tell cluster that VIP needs to stand where a router (node clone):
+pcs constraint colocation add Router_VIP with mysqlrouter-clone score=INFINITY
+
+====================================
+***CONNECT APP TO DATABASE
+
+user: dbadmin
+host: 192.168.80.150
+port: 3306
+password: Lethang@1752
+====================================
+create database cluster;
+use cluster;
+create table monitor (int i);
+insert into monitor values(1);
+GRANT ALL PRIVILEGES ON *.* TO 'dbadmin'@'%' WITH GRANT OPTION;
+
+it's just so the monitor script can do a select.
+
+Then somewhat long primitive definition:
+
+pcs resource create Router_VIP ocf:heartbeat:IPaddr2 \
+ip=192.168.80.150 cidr_netmask=24 op monitor interval=5s
+
+pcs resource refresh mysql
+
+
+pcs resource create mysql ocf:heartbeat:mysql \
+binary="/usr/bin/mysqld_safe" \
+config="/etc/my.cnf" datadir="/var/lib/mysql" \
+socket="/var/lib/mysql/mysql.sock" \
+pid="/var/run/mysqld/mysqld.pid" \
+op start timeout=60s op stop timeout=60s op monitor interval=20s
+
+pcs constraint colocation add RouterVIP with mysql score=INFINITY

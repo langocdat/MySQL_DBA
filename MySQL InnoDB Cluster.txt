@@ -1,0 +1,202 @@
+<->Install & Configuration MySQL InnoDB Cluster HA (HighAvailable)<->
+
+----------------------------------------
+
+***MINIMUM REQUIREMENT ARCHITECTURE
+
+1 Gb RAM, 50 Gb Disk, Bridged Adapter Network
+
+4 Host:
+Host 1: App + Routes
+Host 2: Read/Write db1 node (Primary)
+Host 3: Read Only db2 node (Standby)
+Host 4: Read Only db3 node (Standby)
+
+----------------------------------------
+
+***CONFIG NETWORK, FIREWALL; INSTALL SUPPORT PACKAGE
+===>>Perform on all database nodes db1, db2 & db3 (root user)
+
+->UPDATE REPO LIST (yum update -y)
+
+->EDIT HOST
+
+vi /etc/hosts
+192.168.202.105	router	apps
+192.168.202.106	db1	db1.local
+192.168.202.107	db2	db2.local
+192.168.202.108	db3	db3.local
+
+->DISABLE FIREWALL (...) & SET SELINUX TO DISABLED MODE (...)
+
+->DOWNLOAD INSTALL & UPDATE THE LATEST MYSQL REPO CONFIG
+
+yum install -y wget
+
+wget https://dev.mysql.com/get/mysql80-community-release-el7-7.noarch.rpm
+
+rpm -i mysql80-community-release-el7-7.noarch.rpm
+
+yum update -y
+
+yum install -y mysql-community-server mysql-shell
+
+->START MYSQLD
+
+systemctl start mysqld.service
+systemctl enable mysqld.service
+
+grep 'A temporary password is generated for root@localhost' /var/log/mysqld.log |tail -1  
+-->> password: )9Y?4qWoU?)h | %kiECjn8<G5A
+
+->PREPARING THE SERVER FOR INNODB CLUSTER
+(Easiest way is to use the new MySQL Shell)
+
+mysqlsh
+dba.configureLocalInstance("root@localhost:3306");
+
+Change password in mysql:
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'Lethang@1752', 'root'@'localhost' PASSWORD EXPIRE NEVER;
+
+mysqlsh
+dba.configureLocalInstance("root@localhost:3306");
+
+		~Pick 2 – Create a new admin account for InnoDB cluster with minimal required grants
+		~Account Name: ic | inno
+		~Password: Lethang@1752
+		~Confirm password: Lethang@1752
+		~Do you want to perform the required configuration changes?: y
+		~Do you want to restart the instance after configuring it?: y
+
+dba.checkInstanceConfiguration('ic@db1:3306'); | inno@inno1:3306
+-->> OK
+
+->CREATING THE CLUSTER
+
+//On db1, connect as cluster admin from MySQL Shell
+
+mysqlsh
+
+MYSQL JS >
+shell.connect('ic@db1:3306');
+
+-----Create cluster configuration
+
+cluster = dba.createCluster('my_innodb_cluster');
+
+dba.getCluster().status();
+
+-----Check cluster configuration status
+
+cluster.status()
+
+-----Add the second node, db2 & accept the default recovery method, "Clone"
+
+cluster.addInstance('ic@db2:3306');
+cluster.status() --> Still OK_NO_TOLERANCE so we need at least 3 nodes in a cluster for fault tolerance
+
+-----Add the last node, db3 & accept the default recovery method, "Clone"
+
+cluster.addInstance('ic@db3:3306');
+cluster.status() --> OK, the MySQL Group Replication deployment is now complete and in synced
+
+----------------------------------------
+
+***DEPLOYING THE ROUTER
+===>>Perform in router host
+
+->EDIT HOST
+
+vi /etc/hosts
+192.168.202.105	router	apps
+192.168.202.106	db1	db1.local
+192.168.202.107	db2	db2.local
+192.168.202.108	db3	db3.local
+
+->DISABLE FIREWALL (...) & CHANGE SELINUX TO DISABLED MODE (...)
+
+->DOWNLOAD INSTALL & UPDATE THE LATEST MYSQL REPO CONFIG
+
+yum install -y wget
+
+wget https://dev.mysql.com/get/mysql80-community-release-el7-7.noarch.rpm
+
+rpm -i mysql80-community-release-el7-7.noarch.rpm
+
+yum update -y
+
+->INSTALL PYTHON AND FOLLOWED BY MYSQL SERVER AND MYSQL SHELL
+
+yum install -y mysql-router.x86_64 mysql-community-client.x86_64 mysql-router-community.x86_64
+
+mysqlrouter --bootstrap ic@db1:3306 --directory myrouter --user=root
+
+myrouter/start.sh
+
+-----Verify if the anticipated ports are listening correctly
+
+netstat -tulpn | grep mysql
+
+-->>Read/Write: 6446	;	Read/Only: 6447
+
+----------------------------------------
+
+***CONNECTING TO THE CLUSTER
+
+//On db1, connect as cluster admin from MySQL Shell
+
+-----Switch from Javascript mode to SQL mode
+
+\sql
+
+-----Create a database, database user, grant user to the database
+
+CREATE DATABASE sbtest;
+CREATE USER sbtest@'%' IDENTIFIED BY 'password';
+GRANT ALL PRIVILEGES ON sbtest.* TO sbtest@'%';
+
+//On app server
+
+-----Install sysbench to generate some test data
+
+yum install -y sysbench mysql-client
+
+-----For write connection, connect to port 6446 of the router host
+
+Pass@123
+
+mysql -usbtest -p -h192.168.202.105 -P6446 -e 'select user(), @@hostname, @@read_only, @@super_read_only'
+
+-----For read-only connection, connect to port 6447 of the router host
+
+mysql -usbtest -p -h192.168.202.105 -P6447 -e 'select user(), @@hostname, @@read_only, @@super_read_only'
+
+-----Connect to App:
+user: sbtest
+host: 192.168.202.105
+port: 6446
+pass: Pass@123
+db:   sbtest
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+*****NOTED: InnoDB Engine (Group Replication) require constraint key
+
+dba.getCluster().status();
+
+\help Replicaset.setPrimaryInstance -->> help to SwitchRole
+dba.getReplicaSet().setPrimaryInstance('db1:3306',{dryRun: true})
+
+--Switch normal
+dba.getCluster().setPrimaryInstance('db1:3306')
+
+Grant privileges to user:
+CREATE USER 'ic'@'db1' IDENTIFIED BY 'Lethang@1752';
+GRANT ALL PRIVILEGES ON *.* TO 'ic'@'db1' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+
+dba.rebootClusterFromCompleteOutage();
+
+\sql -> show variables like '...';
+
+\h show
