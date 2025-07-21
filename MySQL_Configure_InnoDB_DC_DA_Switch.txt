@@ -30,6 +30,7 @@ Primary - Node 1
 	 - path: C:\ProgramData\MySQL\MySQL Server 8.0
 	 -->> Open Notepad with role "Run as administrator" -->> Select path "C:\ProgramData\MySQL\MySQL Server 8.0" -->> Edit "server-id=1" -->> Save
 	 attention: Each node has its own server-id, which cannot be duplicated, including server-id between nodes belonging to DC and DR.
+	 - Open service.sc -> restart service 'MySQL80'
 	 
 	Step 4: Open port 3306 or off firewall 
 	 - Open "Windows Deffender Firewall" -->> Click "Turn Windows Defender Firewall on or off" -->> Click " Turn off .." -->> OK
@@ -67,7 +68,7 @@ attention: add node in InnoDB DR after create ClusterSet on DC
 	
 ======================================================================
 Create ClusterSet on Primary belongs to DC
-	Step 9: Create ClusterSet
+	Step 9 (user ic): Create ClusterSet 
 	(js): dba.getCluster().createClusterSet('<clusterset_name>')
 	Ex: dba.getCluster().createClusterSet('myclusterset')
 	-->> Check: dba.getClusterSet().status()
@@ -75,7 +76,7 @@ Create ClusterSet on Primary belongs to DC
 
 ======================================================================	
 Replicate Cluster for DR (đứng trên con DC)
-	Step 10: 
+	Step 10 (user ic): 
 	(js): dba.getClusterSet().createReplicaCluster('ic@<IP_address_primary_DR>:3306', '<cluster_dr_name>');
 	Ex: dba.getClusterSet().createReplicaCluster('ic@192.168.56.109:3306', 'drcluster');
 	-->> Check: dba.getClusterSet().status();
@@ -136,4 +137,5 @@ Step 4: delete from demo_table;
 
 ======================================================================
 Remove InnoDB from ClusterSet
-dba.getClusterSet().removeCluster('drcluster')
+	(js): dba.getClusterSet().removeCluster('drcluster', {force: true})
+
