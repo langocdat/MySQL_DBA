@@ -1,0 +1,140 @@
+
+Step 1: 
+	- Configure in the all node
+	(bash_root): yum update -y
+	(bash_root): vi /etc/selinux/config -->> SELINUX=disabled
+	(bash_root): systemctl stop firewalld.service
+	(bash_root): systemctl disable firewalld.service
+Step 2: Config /etc/hosts
+	- Configure in the all node
+	(bash_root): vi /etc/hosts
+	Add node:
+		192.168.56.31 rac1.localdomain rac1
+		192.168.56.32 rac2.localdomain rac2
+Step 3: Install MySQL Yum Repository
+	- Configure in the all node
+	- Download:
+		(bash_root): wget https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm
+	- Install: 
+		(bash_root): rpm -Uvh mysql80-community-release-el7-11.noarch.rpm
+	- Confirm
+		(bash_root): yum repolist enabled | grep mysql
+Step 4: Install MySQL Server
+	- Configure in the all node
+	- Install MySQL server 8.0
+		(bash_root): yum install -y mysql-community-server
+	- Start and Enable service
+		(bash_root): systemctl start mysqld
+		(bash_root): systemctl enable mysql
+	- Status check:
+		(bash_root): systemctl status mysql
+Step 5: Create the password
+	- Configure in the all node
+	- Create the temporary password
+		(bash_root): grep 'temporary password' /var/log/mysqld.log
+	- Login 
+		(bash_root): mysql -u root -p
+		-->> fill the temporary password
+	- Replace temporary password to your password
+		(bash_root): alter user 'root'@'localhost' identified by 'Mysql.123';
+	- Exit mysql:
+		(mysql): \quit
+		
+Step 6: Configure the /etc/my.cnf
+	- Configure in the all node 
+	- Example: 
+	server-id = 1  # Thay bằng ID unique cho mỗi node: node1=1, node2=2, node3=3
+	gtid_mode=ON
+	enforce_gtid_consistency=ON
+	binlog_checksum=NONE
+	log_replica_updates=ON
+	log_bin=binlog
+	binlog_format=ROW
+	default_authentication_plugin=mysql_native_password
+	innodb_autoinc_lock_mode=2
+	bind-address=0.0.0.0  # Cho phép kết nối từ ngoài
+	report_host = rac1.localdomain  # Thay bằng hostname của node tương ứng
+	loose-group_replication_group_name="2934c0f8-2cb7-446c-b444-84728dd98522"  # UUID chung cho cluster (tạo bằng `uuidgen`)
+	loose-group_replication_start_on_boot=OFF
+	loose-group_replication_local_address="rac1.localdomain:33061"  # Thay hostname và port unique (33061, 33062, 33063 cho từng node)
+	loose-group_replication_group_seeds="rac1.localdomain:33061,rac2.localdomain:33062"  # Danh sách seeds
+	loose-group_replication_bootstrap_group=OFF
+	loose-group_replication_ip_whitelist="192.168.56.0/24"  # Subnet của bạn
+	loose-group_replication_single_primary_mode=ON
+	
+	- Restart MySQL:
+		(bash_root): systemctl restart mysqld
+		
+Step 7: Create user for replication
+	- Configure in the all node
+	- Login:
+		(bash_root): mysql -u root -p
+		-->> fill the your password
+	- Create the user for replication
+		(mysql): CREATE USER 'clusteradmin'@'%' IDENTIFIED BY 'Mysql.123';
+		(mysql): GRANT ALL PRIVILEGES ON *.* TO 'clusteradmin'@'%' WITH GRANT OPTION;
+		(mysql): FLUSH PRIVILEGES;
+Step 8: Install MySQL Shell
+	- Configure in the all node
+	- Install the mysql shell:
+		(bash_root): yum install -y mysql-shell
+	- Status check: 
+		(bash_root): mysqlsh --version
+	- Go to shell:
+		(bash_root): mysqlsh
+Step 9: Configure the shell
+	- Configure in the all node
+	- Go to shell:
+		(bash_root): mysqlsh
+		(mysql_js): \connect clusteradmin@rac1.localdomain:3306
+		-->> fill the your password in the Step 7
+	- Status check:
+		(mysql_js): dba.checkInstanceConfiguration('clusteradmin@rac1.localdomain:3306')
+		
+	--->>> Nếu có lỗi: 
+	sửa bằng: (mysql_js): dba.configureInstance('clusteradmin@rac1.localdomain:3306') -->> fill y
+	Hoặc sửa trong /etc/my.cnf
+		- Thêm binlog_transaction_dependency_tracking = WRITESET
+		- Restart MySQL: (bash_root): systemctl restart mysqld
+		- Status check: (bash_root): systemctl status mysqld
+	Expected Result:
+		The instance 'rac1.localdomain:3306' is valid to be used in an InnoDB cluster.
+		{
+    		"status": "ok"
+		}
+		
+Step 10: Configure in the primary node
+	- (mysql_js): var cluster = dba.createCluster('myCluster')
+	- Add node 2, node 3:
+		(mysql_js): cluster.addInstance('clusteradmin@rac2.localdomain:3306')
+		-->> fill C(lone)
+		(mysql_js): cluster.addInstance('clusteradmin@rac3.localdomain:3306')
+		-->> fill C(lone)
+	- Status checK:
+		(mysql_js_): cluster.status()
+		
+	Góc nhìn từ node 2:		
+		\connect clusteradmin@rac2.localdomain:3306
+		var cluster = dba.getCluster()
+		cluster.status()  // → Xem từ góc nhìn rac2
+	
+
+========================================================
+	
+mysql> SELECT MEMBER_ID,
+    ->        MEMBER_HOST,
+    ->        MEMBER_PORT,
+    ->        MEMBER_STATE,
+    ->        MEMBER_ROLE
+    -> FROM performance_schema.replication_group_members;
++--------------------------------------+------------------+-------------+--------------+-------------+
+| MEMBER_ID                            | MEMBER_HOST      | MEMBER_PORT | MEMBER_STATE | MEMBER_ROLE |
++--------------------------------------+------------------+-------------+--------------+-------------+
+| 1c9b8f87-b3ab-11f0-81b0-0800277b2930 | rac2.localdomain |        3306 | ONLINE       | SECONDARY   |
+| da9e01e9-b3aa-11f0-927b-0800273f9ade | rac1.localdomain |        3306 | ONLINE       | PRIMARY     |
++--------------------------------------+------------------+-------------+--------------+-------------+
+2 rows in set (0.00 sec)
+
+
+Gọi file: 
+	(bash_root): source /root/mysql_hc_scripts.sh
