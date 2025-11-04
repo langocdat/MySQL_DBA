@@ -4,3 +4,4 @@ Nếu lỗi: Gán tạm thời env variable:
   (powershell): $env:Path += ";C:\Program Files\MySQL\MySQL Server 8.0\bin"
 Step 2: Run file
   (powershell): C:\mysql_hc_window.ps1
+-- Link file: https://github.com/langocdat/MySQL_DBA/blob/main/Scripts/mysql_healthcheck_window.ps1
