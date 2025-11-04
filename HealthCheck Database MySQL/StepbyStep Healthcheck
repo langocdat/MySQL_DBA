@@ -1,1 +1,6 @@
 Step 1: Check Environment Variable
+  (powershell): mysql --version
+Nếu lỗi: Gán tạm thời env variable:
+  (powershell): $env:Path += ";C:\Program Files\MySQL\MySQL Server 8.0\bin"
+Step 2: Run file
+  (powershell): C:\mysql_hc_window.ps1
