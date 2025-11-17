@@ -2,12 +2,10 @@
   --->>> Link file https://github.com/langocdat/MySQL_DBA/blob/main/Scripts/OSLog.ps1
 2. Run scripts:
   (powershell-Adminstrator): .\OSLog.ps1
-
   --->>> Bypass policy: 
-                        \n\rSet-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-  
+                      
+                        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
                         powershell -ExecutionPolicy Bypass -File "C:\OSLog.ps1"
-
 4. Monitor:
   (powershell-Adminstrator): logman query OSLog
 5. Stop scripts:
