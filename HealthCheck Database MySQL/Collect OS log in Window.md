@@ -3,7 +3,8 @@
 2. Run scripts:
   (powershell-Adminstrator): .\OSLog.ps1
 
-  --->>> Bypass policy: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+  --->>> Bypass policy: 
+                        \n\rSet-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
   
                         powershell -ExecutionPolicy Bypass -File "C:\OSLog.ps1"
 
