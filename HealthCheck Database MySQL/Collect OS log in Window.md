@@ -4,6 +4,7 @@
   (powershell-Adminstrator): .\OSLog.ps1
 
   --->>> Bypass policy: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+  
                         powershell -ExecutionPolicy Bypass -File "C:\OSLog.ps1"
 
 4. Monitor:
