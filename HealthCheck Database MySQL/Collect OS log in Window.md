@@ -4,7 +4,7 @@
   (powershell-Adminstrator): .\OSLog.ps1
 
   --->>> Bypass policy: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-                        \r\npowershell -ExecutionPolicy Bypass -File "C:\OSLog.ps1"
+                        powershell -ExecutionPolicy Bypass -File "C:\OSLog.ps1"
 
 4. Monitor:
   (powershell-Adminstrator): logman query OSLog
