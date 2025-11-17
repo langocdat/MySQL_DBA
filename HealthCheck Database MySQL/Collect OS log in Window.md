@@ -2,9 +2,10 @@
   --->>> Link file https://github.com/langocdat/MySQL_DBA/blob/main/Scripts/OSLog.ps1
 2. Run scripts:
   (powershell-Adminstrator): .\OSLog.ps1
-3. Monitor:
+--->>> Bypass policy: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+4. Monitor:
   (powershell-Adminstrator): logman query OSLog
-4. Stop scripts:
+5. Stop scripts:
   (powershell-Adminstrator): logman stop OSLog
 --->>> Result: File CSV contains the log OS
 
