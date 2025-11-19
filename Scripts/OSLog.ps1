@@ -7,7 +7,8 @@
 
 $LogPath = "C:\OSLogs"
 $SetName = "OSLog"
-$LogFile = "$LogPath\OSLog_$(hostname).csv"
+$Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogFile = "$LogPath\OSLog_${Hostname}_${Timestamp}.csv"
 
 # Create the folder
 if (!(Test-Path $LogPath)) { 
@@ -39,3 +40,4 @@ Write-Host "OSLog started! (run nohup)" -ForegroundColor Green
 Write-Host "File log: $LogFile" -ForegroundColor Cyan
 Write-Host "Monitor: logman query OSLog" -ForegroundColor Yellow
 Write-Host "Stop: logman stop OSLog" -ForegroundColor Red
+
